@@ -1,0 +1,46 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/vulntrack}
+    username: ${SPRING_DATASOURCE_USERNAME:vulntrack}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8080
+
+nvd:
+  api:
+    base-url: https://services.nvd.nist.gov/rest/json/cves/2.0
+    sync-days-back: 7
+
+external:
+  api:
+    key: ${EXTERNAL_API_KEY:}
+
+logging:
+  level:
+    com.vulntrack: INFO
+    org.springframework.security: WARN
+
+security:
+  jwt:
+    issuer: vulntrack-backend
+    secret: ${JWT_SECRET:}
+    access-token-ttl: PT15M
+    refresh-token-ttl: P7D
+
+app:
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
