@@ -51,6 +51,7 @@ jobs:
             -DnvdApiEndpoint=$VULNTRACK_URL/api/v1/nvd/rest/json/cves/2.0
 
       - name: Verify Dependency-Check report
+        working-directory: backend
         run: |
           set -e
 
@@ -64,6 +65,7 @@ jobs:
           echo "Report found at $REPORT_FILE"
 
       - name: Transform report for VulnTrack API
+        working-directory: backend
         run: |
           set -e
 
@@ -98,6 +100,7 @@ jobs:
           echo "Payload written to $PAYLOAD_FILE"
 
       - name: Send report to VulnTrack
+        working-directory: backend
         env:
           VULNTRACK_API_KEY: ${{ secrets.VULNTRACK_API_KEY }}
         run: |
@@ -137,6 +140,7 @@ jobs:
           fi
 
       - name: Upload Dependency-Check reports
+        working-directory: backend
         if: always()
         uses: actions/upload-artifact@v4
         with:
