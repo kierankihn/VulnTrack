@@ -37,6 +37,7 @@ public class NvdSyncService {
     private int syncDaysBack;
 
     private static final int PAGE_SIZE = 2000;
+    private static final int MAX_DATE_RANGE_DAYS = 120;
 
     // Allowlist of hosts we will contact during NVD sync. Prevents SSRF via a
     // misconfigured or attacker-controlled nvd.api.base-url value.
@@ -44,16 +45,25 @@ public class NvdSyncService {
 
     @Transactional
     public SyncResult sync() {
-        LocalDate since = cveRepo.findTopByOrderByLastModifiedDateDesc()
-            .map(CveEntry::getLastModifiedDate)
-            .map(d -> d.minusDays(1))
-            .orElse(LocalDate.now().minusDays(syncDaysBack));
-
-        log.info("Starting NVD sync from {}", since);
         SyncResult result = new SyncResult();
 
         try {
-            syncRange(since, LocalDate.now(), result);
+            RestClient client = buildClient();
+            int remoteTotal = fetchRemoteTotalResults(client);
+            long localTotal = cveRepo.count();
+
+            if (requiresBackfill(localTotal, remoteTotal)) {
+                log.info("Starting full NVD backfill: local {} of remote {}", localTotal, remoteTotal);
+                syncAll(client, result);
+            } else {
+                LocalDate since = cveRepo.findTopByOrderByLastModifiedDateDesc()
+                    .map(CveEntry::getLastModifiedDate)
+                    .map(d -> d.minusDays(1))
+                    .orElse(LocalDate.now().minusDays(syncDaysBack));
+
+                log.info("Starting incremental NVD sync from {}", since);
+                syncIncrementalWindows(client, since, LocalDate.now(), result);
+            }
             log.info("NVD sync complete: {} added, {} updated", result.added, result.updated);
         } catch (Exception e) {
             log.error("NVD sync failed", e);
@@ -62,13 +72,39 @@ public class NvdSyncService {
         return result;
     }
 
-    private void syncRange(LocalDate from, LocalDate to, SyncResult result) throws Exception {
-        RestClient client = buildClient();
+    private int fetchRemoteTotalResults(RestClient client) throws Exception {
+        String url = buildTotalResultsUrl();
+        validateNvdUrl(url);
+        String body = client.get().uri(url).retrieve().body(String.class);
+        return objectMapper.readTree(body).path("totalResults").asInt(0);
+    }
+
+    private void syncAll(RestClient client, SyncResult result) throws Exception {
+        syncPages(client, startIndex -> buildFullSyncUrl(startIndex), result);
+    }
+
+    private void syncIncrementalWindows(RestClient client, LocalDate from, LocalDate to, SyncResult result) throws Exception {
+        LocalDate windowStart = from;
+        while (!windowStart.isAfter(to)) {
+            LocalDate windowEnd = windowStart.plusDays(MAX_DATE_RANGE_DAYS - 1L);
+            if (windowEnd.isAfter(to)) {
+                windowEnd = to;
+            }
+            syncRange(client, windowStart, windowEnd, result);
+            windowStart = windowEnd.plusDays(1);
+        }
+    }
+
+    private void syncRange(RestClient client, LocalDate from, LocalDate to, SyncResult result) throws Exception {
+        syncPages(client, startIndex -> buildSyncUrl(from, to, startIndex), result);
+    }
+
+    private void syncPages(RestClient client, PageUrlBuilder urlBuilder, SyncResult result) throws Exception {
         int startIndex = 0;
         int totalResults;
 
         do {
-            String url = buildSyncUrl(from, to, startIndex);
+            String url = urlBuilder.build(startIndex);
             validateNvdUrl(url);
 
             log.debug("Fetching NVD: {}", url);
@@ -95,6 +131,22 @@ public class NvdSyncService {
                 Thread.sleep(600);
             }
         } while (startIndex < totalResults);
+    }
+
+    String buildFullSyncUrl(int startIndex) {
+        return nvdBaseUrl
+            + "?startIndex=" + startIndex
+            + "&resultsPerPage=" + PAGE_SIZE;
+    }
+
+    String buildTotalResultsUrl() {
+        return nvdBaseUrl
+            + "?startIndex=0"
+            + "&resultsPerPage=1";
+    }
+
+    boolean requiresBackfill(long localCount, int remoteTotal) {
+        return remoteTotal > 0 && localCount < remoteTotal;
     }
 
     String buildSyncUrl(LocalDate from, LocalDate to, int startIndex) {
@@ -223,6 +275,11 @@ public class NvdSyncService {
         if (score >= 4.0) return CveSeverity.MEDIUM;
         if (score > 0.0)  return CveSeverity.LOW;
         return CveSeverity.NONE;
+    }
+
+    @FunctionalInterface
+    private interface PageUrlBuilder {
+        String build(int startIndex);
     }
 
     @lombok.Data

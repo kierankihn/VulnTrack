@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { setAccessToken } from './api'
+import { AUTH_UNAUTHORIZED_EVENT, clearStoredAuth, setAccessToken } from './api'
 
 export interface AuthUser {
   id: number
@@ -73,6 +73,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(false)
   }, [])
 
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      clearStoredAuth()
+      setUser(null)
+    }
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized)
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized)
+  }, [])
+
   const login = async (usernameOrEmail: string, password: string) => {
     const res = await fetch('/api/v1/auth/login', {
       method: 'POST',
@@ -100,10 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ refreshToken }),
       }).catch(() => {})
     }
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('refreshToken')
-    localStorage.removeItem('authUser')
-    setAccessToken(null)
+    clearStoredAuth()
     setUser(null)
   }
 

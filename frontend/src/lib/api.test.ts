@@ -1,4 +1,4 @@
-import { assetApi, cveApi, ticketApi } from './api'
+import { AUTH_UNAUTHORIZED_EVENT, assetApi, cveApi, setAccessToken, ticketApi } from './api'
 
 describe('api helpers', () => {
   const fetchMock = vi.fn()
@@ -8,6 +8,8 @@ describe('api helpers', () => {
   })
 
   afterEach(() => {
+    localStorage.clear()
+    setAccessToken(null)
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -60,5 +62,23 @@ describe('api helpers', () => {
     fetchMock.mockResolvedValue(new Response('boom', { status: 500, statusText: 'Server Error' }))
 
     await expect(ticketApi.getStats()).rejects.toThrow('Server Error')
+  })
+
+  it('clears stored auth and emits an unauthorized event on 401 responses', async () => {
+    const listener = vi.fn()
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, listener)
+    localStorage.setItem('accessToken', 'expired-token')
+    localStorage.setItem('refreshToken', 'refresh-token')
+    localStorage.setItem('authUser', JSON.stringify({ username: 'admin' }))
+    setAccessToken('expired-token')
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 401 }))
+
+    await expect(ticketApi.getStats()).rejects.toThrow('Unauthorized')
+
+    expect(localStorage.getItem('accessToken')).toBeNull()
+    expect(localStorage.getItem('refreshToken')).toBeNull()
+    expect(localStorage.getItem('authUser')).toBeNull()
+    expect(listener).toHaveBeenCalledTimes(1)
+    window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, listener)
   })
 })

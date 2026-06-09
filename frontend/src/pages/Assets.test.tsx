@@ -8,6 +8,13 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/api', () => ({
+  AUTH_UNAUTHORIZED_EVENT: 'vulntrack:unauthorized',
+  clearStoredAuth: vi.fn(() => {
+    localStorage.removeItem('accessToken')
+    localStorage.removeItem('refreshToken')
+    localStorage.removeItem('authUser')
+  }),
+  setAccessToken: vi.fn(),
   assetApi: {
     search: mocks.assetSearch,
     create: vi.fn(),

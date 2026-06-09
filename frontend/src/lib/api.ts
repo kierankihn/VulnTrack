@@ -1,9 +1,22 @@
 const BASE = '/api/v1'
+export const AUTH_UNAUTHORIZED_EVENT = 'vulntrack:unauthorized'
 
 let _token: string | null = null
 
 export function setAccessToken(token: string | null) {
   _token = token
+}
+
+export function clearStoredAuth() {
+  _token = null
+  localStorage.removeItem('accessToken')
+  localStorage.removeItem('refreshToken')
+  localStorage.removeItem('authUser')
+}
+
+function notifyUnauthorized() {
+  clearStoredAuth()
+  window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT))
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -13,6 +26,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   const res = await fetch(BASE + path, { ...options, headers })
   if (!res.ok) {
+    if (res.status === 401) {
+      notifyUnauthorized()
+    }
     const err = await res.json().catch(() => ({ message: res.statusText }))
     throw new Error(err.message || err.error || 'Request failed')
   }

@@ -31,6 +31,39 @@ class NvdSyncServiceTest {
     }
 
     @Test
+    void buildFullSyncUrlPagesAllCvesWithoutDateFilters() {
+        NvdSyncService service = new NvdSyncService(null, new ObjectMapper(), systemSettingService());
+        ReflectionTestUtils.setField(service, "nvdBaseUrl", "https://services.nvd.nist.gov/rest/json/cves/2.0");
+
+        String url = service.buildFullSyncUrl(6000);
+
+        assertEquals(
+            "https://services.nvd.nist.gov/rest/json/cves/2.0"
+                + "?startIndex=6000"
+                + "&resultsPerPage=2000",
+            url
+        );
+    }
+
+    @Test
+    void requiresBackfillWhenLocalCveCountIsBelowRemoteTotal() {
+        NvdSyncService service = new NvdSyncService(null, new ObjectMapper(), systemSettingService());
+
+        boolean requiresBackfill = service.requiresBackfill(100_000, 354_835);
+
+        assertEquals(true, requiresBackfill);
+    }
+
+    @Test
+    void doesNotRequireBackfillWhenLocalCveCountMatchesRemoteTotal() {
+        NvdSyncService service = new NvdSyncService(null, new ObjectMapper(), systemSettingService());
+
+        boolean requiresBackfill = service.requiresBackfill(354_835, 354_835);
+
+        assertEquals(false, requiresBackfill);
+    }
+
+    @Test
     void resolveApiKeyReadsOnlyPersistedSystemSetting() {
         NvdSyncService service = new NvdSyncService(null, new ObjectMapper(), systemSettingService());
 
