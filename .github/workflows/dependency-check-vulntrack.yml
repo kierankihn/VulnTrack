@@ -48,7 +48,7 @@ jobs:
             -Dformat=JSON \
             -Dodc.outputDirectory="$REPORT_DIR" \
             -DenableRetired=true \
-            -DnvdApiEndpoint=https://$VULNTRACK_URL/api/v1/nvd/rest/json/cves/2.0
+            -DnvdApiEndpoint=$VULNTRACK_URL/api/v1/nvd/rest/json/cves/2.0
 
       - name: Verify Dependency-Check report
         run: |
