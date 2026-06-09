@@ -1,0 +1,143 @@
+name: Dependency Check to VulnTrack
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  REPORT_DIR: dependency-check-report
+  VULNTRACK_URL: ${{ vars.VULNTRACK_URL }}
+
+jobs:
+  dependency-check:
+    name: Run OWASP Dependency-Check and push to VulnTrack
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Run OWASP Dependency-Check
+        run: |
+          set -e
+
+          echo "Running OWASP Dependency-Check for project: $PROJECT_NAME"
+
+          mkdir -p "$REPORT_DIR"
+
+          mvn -B org.owasp:dependency-check-maven:12.2.2:check \
+            -Dformat=JSON \
+            -Dodc.outputDirectory="$REPORT_DIR" \
+            -DenableRetired=true \
+            -DnvdApiEndpoint=https://$VULNTRACK_URL/api/v1/nvd/rest/json/cves/2.0
+
+      - name: Verify Dependency-Check report
+        run: |
+          set -e
+
+          REPORT_FILE="$REPORT_DIR/dependency-check-report.json"
+
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "ERROR: Report file not found at $REPORT_FILE"
+            exit 1
+          fi
+
+          echo "Report found at $REPORT_FILE"
+
+      - name: Transform report for VulnTrack API
+        run: |
+          set -e
+
+          REPORT_FILE="$REPORT_DIR/dependency-check-report.json"
+          PAYLOAD_FILE="$REPORT_DIR/vulntrack-payload.json"
+
+          echo "Transforming report for VulnTrack API..."
+
+          jq --arg project "$PROJECT_NAME" '{
+            projectName: $project,
+            dependencies: [
+              .dependencies[]?
+              | select(.vulnerabilities != null and (.vulnerabilities | length) > 0)
+              | {
+                  fileName: .fileName,
+                  filePath: .filePath,
+                  vulnerabilities: [
+                    .vulnerabilities[]
+                    | select(.name | startswith("CVE-"))
+                    | {
+                        name: .name,
+                        severity: .severity,
+                        cvssScore: (.cvssv3.baseScore // .cvssv2.score // 0),
+                        description: .description,
+                        references: [.references[]?.url // empty]
+                      }
+                  ]
+                }
+            ]
+          }' "$REPORT_FILE" > "$PAYLOAD_FILE"
+
+          echo "Payload written to $PAYLOAD_FILE"
+
+      - name: Send report to VulnTrack
+        env:
+          VULNTRACK_API_KEY: ${{ secrets.VULNTRACK_API_KEY }}
+        run: |
+          set -e
+
+          PAYLOAD_FILE="$REPORT_DIR/vulntrack-payload.json"
+
+          if [ -z "$VULNTRACK_URL" ]; then
+            echo "ERROR: VULNTRACK_URL is not set"
+            exit 1
+          fi
+
+          if [ -z "$VULNTRACK_API_KEY" ]; then
+            echo "ERROR: VULNTRACK_API_KEY is not set"
+            exit 1
+          fi
+
+          echo "Sending report to VulnTrack..."
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST "$VULNTRACK_URL/api/v1/external/scan" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $VULNTRACK_API_KEY" \
+            --data-binary "@$PAYLOAD_FILE")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(printf '%s\n' "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            TICKETS_CREATED=$(echo "$BODY" | jq '.ticketsCreated')
+            echo "SUCCESS: $TICKETS_CREATED new ticket(s) created in VulnTrack"
+            echo "$BODY" | jq '.tickets[] | "  - #\(.id): \(.title) [\(.status)]"' -r 2>/dev/null || true
+          else
+            echo "ERROR: VulnTrack API returned HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
+          fi
+
+      - name: Upload Dependency-Check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: dependency-check-report/
