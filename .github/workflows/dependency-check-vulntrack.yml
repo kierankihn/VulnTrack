@@ -13,6 +13,7 @@ env:
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
   REPORT_DIR: dependency-check-report
   VULNTRACK_URL: ${{ vars.VULNTRACK_URL }}
+  ODC_DATA_DIR: .dependency-check-data
 
 jobs:
   dependency-check:
@@ -35,6 +36,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
+      - name: Get Dependency-Check cache date
+        id: odc-cache-date
+        run: |
+          echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Dependency-Check data cache
+        id: odc-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.ODC_DATA_DIR }}
+          key: ${{ runner.os }}-dependency-check-${{ steps.odc-cache-date.outputs.date }}
+          restore-keys: |
+            ${{ runner.os }}-dependency-check-
+
       - name: Run OWASP Dependency-Check
         working-directory: backend
         run: |
@@ -42,20 +57,31 @@ jobs:
 
           echo "Running OWASP Dependency-Check for project: $PROJECT_NAME"
 
-          mkdir -p "$REPORT_DIR"
+          VULNTRACK_URL="${VULNTRACK_URL%/}"
+
+          mkdir -p "$GITHUB_WORKSPACE/$REPORT_DIR"
+          mkdir -p "$GITHUB_WORKSPACE/$ODC_DATA_DIR"
 
           mvn -B org.owasp:dependency-check-maven:12.2.2:check \
             -Dformat=JSON \
-            -Dodc.outputDirectory="$REPORT_DIR" \
+            -Dodc.outputDirectory="$GITHUB_WORKSPACE/$REPORT_DIR" \
+            -DdataDirectory="$GITHUB_WORKSPACE/$ODC_DATA_DIR" \
             -DenableRetired=true \
-            -DnvdApiEndpoint=$VULNTRACK_URL/api/v1/nvd/rest/json/cves/2.0
+            -DnvdValidForHours=24 \
+            -DnvdApiEndpoint="$VULNTRACK_URL/api/v1/nvd/rest/json/cves/2.0"
+
+      - name: Save Dependency-Check data cache
+        if: steps.odc-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.ODC_DATA_DIR }}
+          key: ${{ runner.os }}-dependency-check-${{ steps.odc-cache-date.outputs.date }}
 
       - name: Verify Dependency-Check report
-        working-directory: backend
         run: |
           set -e
 
-          REPORT_FILE="$REPORT_DIR/dependency-check-report.json"
+          REPORT_FILE="$GITHUB_WORKSPACE/$REPORT_DIR/dependency-check-report.json"
 
           if [ ! -f "$REPORT_FILE" ]; then
             echo "ERROR: Report file not found at $REPORT_FILE"
@@ -65,7 +91,6 @@ jobs:
           echo "Report found at $REPORT_FILE"
 
       - name: Transform report for VulnTrack API
-        working-directory: backend
         run: |
           set -e
 
@@ -100,7 +125,6 @@ jobs:
           echo "Payload written to $PAYLOAD_FILE"
 
       - name: Send report to VulnTrack
-        working-directory: backend
         env:
           VULNTRACK_API_KEY: ${{ secrets.VULNTRACK_API_KEY }}
         run: |
@@ -144,4 +168,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
-          path: backend/dependency-check-report/
+          path: dependency-check-report/
